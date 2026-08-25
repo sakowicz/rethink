@@ -18,19 +18,29 @@ export default class Device extends AABBDevice {
     // consecutive frames seen with an empty selection block
     emptyStreak = 0
 
+    // pending status re-reads scheduled after a write
+    statusPollTimers: ReturnType<typeof setTimeout>[] = []
+
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, thinq)
         this.setConfig(
             allowExtendedType({
                 ...HADevice.config(meta, { name: 'LG Washer' }),
                 components: {
+                    // F02A0100 is a power-button press, not "set to on": sending it twice turns
+                    // the appliance on and then off again. There is also no usable feedback -
+                    // after a power change the appliance goes quiet for up to 40 seconds and
+                    // ignores F0ED status requests in the meantime, so a switch spent most of
+                    // its time showing the previous state. A button matches both the command and
+                    // what can actually be observed; `status` carries the real state once it
+                    // arrives.
                     power: {
-                        platform: 'switch',
+                        platform: 'button',
                         unique_id: '$deviceid-power',
-                        state_topic: '$this/power',
                         command_topic: '$this/power/set',
-                        name: '',
-                        icon: 'mdi:washing-machine',
+                        payload_press: '',
+                        name: 'Power',
+                        icon: 'mdi:power',
                     },
                     start: {
                         platform: 'button',
@@ -265,16 +275,23 @@ export default class Device extends AABBDevice {
         // not yet - and treating that as standby flipped the switch to OFF on a running
         // machine. Real standby lasts minutes, so wait for a second consecutive empty frame
         // and drop the lone one instead of publishing anything from it.
+        // The Wi-Fi module stays awake after the panel is switched off and keeps reporting
+        // status=1 ("Ready") with the whole selection zeroed, so status>0 on its own would claim
+        // the machine is ready when it is dead. There is no separate power bit: standby is
+        // exactly "status 1 with nothing selected".
+        //
+        // One empty frame is not proof of standby, though - the first reply to F0ED arrives
+        // sparse, with the clock populated but the selection not. Only `status` waits for a
+        // second consecutive empty frame; every other field is still published, because this
+        // appliance reports rarely enough that dropping a whole frame is expensive.
         const selectionEmpty = status === 1 && course === 0 && spin === 0 && temp === 0
         this.emptyStreak = selectionEmpty ? this.emptyStreak + 1 : 0
-        if (selectionEmpty && this.emptyStreak < 2) return
-
         const powered = status > 0 && !selectionEmpty
+        const statusDecided = !selectionEmpty || this.emptyStreak >= 2
 
-        this.publishProperty('power', powered ? 'ON' : 'OFF')
         this.publishProperty('error_message', ERRORS[error] ?? 'unknown') // publish message before set error state
         this.publishProperty('error', error ? 'ON' : 'OFF')
-        this.publishProperty('status', powered ? (STATES[status] ?? 'unknown') : 'Off')
+        if (statusDecided) this.publishProperty('status', powered ? (STATES[status] ?? 'unknown') : 'Off')
         this.publishProperty('course', COURSES_VB[course] ?? 'unknown')
         // Spin and temperature are selections, not live readings, and the appliance stops
         // reporting them part-way through: temperature drops to 0 when Rinsing starts and spin
@@ -302,16 +319,31 @@ export default class Device extends AABBDevice {
         this.publishProperty('delay_end', delay_end)
     }
 
-    setProperty(prop: string, mqttValue: string) {
-        if (prop === 'power') {
-            if (mqttValue === 'ON') {
-                this.send(Buffer.from('F02A0100', 'hex'))
-            } else if (mqttValue === 'OFF') {
-                this.send(Buffer.from('F024010100', 'hex'))
-            }
+    // The appliance does not report a power change on its own. Switching the panel off makes it
+    // fall silent after a couple of frames, and waking it produces nothing at all, because the
+    // MQTT session survives and nothing re-issues the F0ED status request that start() sends on
+    // connect. Home Assistant was left showing whatever it knew before the command. So re-read
+    // the state after every write; the retries cover the appliance being busy repeating an
+    // unanswered 0x03 record, during which it ignores status requests.
+    requestStatusSoon() {
+        for (const delay of [1000, 3000, 8000]) {
+            this.statusPollTimers.push(setTimeout(() => this.start(), delay))
         }
+    }
+
+    drop() {
+        for (const timer of this.statusPollTimers) clearTimeout(timer)
+        this.statusPollTimers = []
+        super.drop()
+    }
+
+    setProperty(prop: string, mqttValue: string) {
+        // toggles the appliance, whichever way it currently is
+        if (prop === 'power') this.send(Buffer.from('F02A0100', 'hex'))
 
         if (prop === 'pause') this.send(Buffer.from('F024040100', 'hex'))
         if (prop === 'start') this.send(Buffer.from(mqttValue || 'F024050100', 'hex'))
+
+        if (prop === 'power' || prop === 'pause' || prop === 'start') this.requestStatusSoon()
     }
 }

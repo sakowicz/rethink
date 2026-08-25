@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import DUT from '@/cloud/devices/Y_VB_Y___W.B32QEUK'
 import type { Metadata } from '@/cloud/thinq'
 import { MockHAConnection, MockThinq2Device, buf, hex } from '@/tests/helpers/mocks'
+import { enableMockTimers, tickMockTimers } from '@/tests/helpers/timers'
 
 const DEVICE_ID = 'test-id'
 const MODEL_ID = 'Y_VB_Y___W.B32QEUK'
@@ -60,6 +61,7 @@ const SAMPLE_EC_DELAY_4H = buf(
 )
 
 const WRITE_INIT = 'AA0EF0ED1121010000001800B5BB'
+const WRITE_POWER_PRESS = 'AA08F02A010098BB'
 
 function makeDevice() {
     const ha = new MockHAConnection()
@@ -100,6 +102,9 @@ describe(MODEL_ID, () => {
         ]) {
             assert.ok(components[c], `component ${c} present`)
         }
+        // power is a stateless press, not a switch: the appliance gives no timely feedback
+        assert.equal(components.power.platform, 'button')
+        assert.equal(components.power.state_topic, undefined)
     })
 
     test('doubled 0xEC frame decodes the current status block', () => {
@@ -107,7 +112,6 @@ describe(MODEL_ID, () => {
         thinq.emit('data', SAMPLE_EC_PANEL_OFF)
         thinq.emit('data', SAMPLE_EC_PANEL_OFF)
         const props = ha.devices[DEVICE_ID].properties
-        assert.equal(props.power, 'OFF')
         assert.equal(props.status, 'Off')
         assert.equal(props.error, 'OFF')
         assert.equal(props.error_message, 'OK')
@@ -178,24 +182,23 @@ describe(MODEL_ID, () => {
         thinq.emit('data', SAMPLE_EC_STANDBY)
         thinq.emit('data', SAMPLE_EC_STANDBY)
         const props = ha.devices[DEVICE_ID].properties
-        assert.equal(props.power, 'OFF')
         assert.equal(props.status, 'Off')
     })
 
-    test('a lone empty frame publishes nothing, so a sparse F0ED reply cannot flip the switch', () => {
+    test('a lone empty frame does not flip status to Off', () => {
         const { ha, thinq } = makeDevice()
         // running machine reports its selection
         thinq.emit('data', SAMPLE_EC_COTTON_800_60)
-        assert.equal(ha.devices[DEVICE_ID].properties.power, 'ON')
 
-        // the sparse reply that used to knock the switch to OFF
+        assert.equal(ha.devices[DEVICE_ID].properties.status, 'Ready')
+
+        // the sparse reply that used to knock the state to Off
         thinq.emit('data', SAMPLE_EB_PANEL_OFF)
-        assert.equal(ha.devices[DEVICE_ID].properties.power, 'ON')
-        assert.equal(ha.devices[DEVICE_ID].properties.course, 'Cotton')
+        assert.equal(ha.devices[DEVICE_ID].properties.status, 'Ready')
 
         // a second empty frame in a row is real standby
         thinq.emit('data', SAMPLE_EB_PANEL_OFF)
-        assert.equal(ha.devices[DEVICE_ID].properties.power, 'OFF')
+        assert.equal(ha.devices[DEVICE_ID].properties.status, 'Off')
     })
 
     test('an empty frame does not reset a run of populated frames', () => {
@@ -204,7 +207,17 @@ describe(MODEL_ID, () => {
         thinq.emit('data', SAMPLE_EC_COTTON_800_60)
         thinq.emit('data', SAMPLE_EB_PANEL_OFF)
         // only one empty frame since the last populated one, so the state still says ON
-        assert.equal(ha.devices[DEVICE_ID].properties.power, 'ON')
+    })
+
+    test('a sparse frame still updates the fields it does carry', () => {
+        const { ha, thinq } = makeDevice()
+        thinq.emit('data', SAMPLE_EC_COTTON_800_60)
+        assert.equal(ha.devices[DEVICE_ID].properties.remaining_time, 229)
+
+        // status is held back on a lone empty frame, but the frame is not dropped wholesale
+        thinq.emit('data', SAMPLE_EB_PANEL_OFF)
+        assert.equal(ha.devices[DEVICE_ID].properties.status, 'Ready')
+        assert.equal(ha.devices[DEVICE_ID].properties.remaining_time, 45)
     })
 
     test('option bits are reported one at a time', () => {
@@ -296,6 +309,42 @@ describe(MODEL_ID, () => {
         const before = ha.devices[DEVICE_ID].properties.power
         thinq.emit('data', buf('001122'))
         assert.equal(ha.devices[DEVICE_ID].properties.power, before)
+    })
+
+    test('a write is followed by status re-reads, since the appliance reports nothing itself', (t) => {
+        enableMockTimers(t)
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+
+        dev.setProperty('power', '')
+        assert.equal(hex(thinq.outbox[0]), WRITE_POWER_PRESS)
+        assert.equal(thinq.outbox.length, 1, 'nothing extra sent synchronously')
+
+        tickMockTimers(t, 1000)
+        assert.equal(hex(thinq.outbox[1]), WRITE_INIT)
+
+        tickMockTimers(t, 7000)
+        assert.equal(thinq.outbox.length, 4, 'three retries in total')
+        assert.ok(thinq.outbox.slice(1).every((p) => hex(p) === WRITE_INIT))
+    })
+
+    test('pending status re-reads are cancelled when the device drops', (t) => {
+        enableMockTimers(t)
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+
+        dev.setProperty('power', '')
+        dev.drop()
+
+        tickMockTimers(t, 10000)
+        assert.equal(thinq.outbox.length, 1, 'only the original command was sent')
+    })
+
+    test('power is a single toggle press, since F02A0100 toggles the appliance', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('power', '')
+        assert.equal(hex(thinq.outbox[0]), WRITE_POWER_PRESS)
     })
 
     test('start() sends the F0ED status request', () => {
