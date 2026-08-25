@@ -8,33 +8,24 @@ const DEVICE_ID = 'test-id'
 const MODEL_ID = 'Y_VB_Y___W.B32QEUK'
 const META: Metadata = { modelId: MODEL_ID, modelName: MODEL_ID, swVersion: '2.11.224' }
 
-// Real captures from an LG F4W1175YW (Vivace, EU) running the VB firmware:
-// DeviceType 201, protocolVer 7, RTK_RTL8720cm, clip_ble_v1.9.237.
-//
-// Frame layout: AA FF <14-byte header> <status block(s)> <crc16> BB, where header[2..3] is the
-// total frame length, header[10] the record kind and header[11..12] the payload length.
-// 0xEB carries one 39-byte status block (inner 53), 0xEC appends the previous block too
-// (inner 92). The appliance answers the F0ED status request with 0xEB and then pushes 0xEC.
+// Real captures from an LG F4W1175YW on the VB firmware (protocolVer 7, clip_ble_v1.9.237).
 
-// Panel switched off: the selection bytes are zeroed while remaining_time keeps whatever the
-// last selection left behind. Lifetime counters stay readable: 19 cycles, 10782 Wh.
+// Panel off: selection zeroed, remaining_time left over from the last selection.
 const SAMPLE_EC_PANEL_OFF = buf(
     'AAFF200A006000479E000100EC004E000001000000000000000000000000000000000000000013006400000000000002022A1E000001000001000000000000000000000000000000000000000013006400000000000002022A1E0040016307BB',
 )
 
-// The 0xEB reply to F0ED1121010000001800, also with the panel off and a stale 45 on the clock.
+// 0xEB reply to the F0ED status request, panel off.
 const SAMPLE_EB_PANEL_OFF = buf(
     'AAFF200A0039004A04000100EB0027000001002D002D0000000000000000000000000001000013006400000000000002022A1E000001017CBB',
 )
 
-// Cotton with the panel showing 800 rpm and 60 C. This is what pins the spin and temperature
-// offsets to the display instead of to a guess.
+// Panel showed Cotton, 800 rpm, 60 C.
 const SAMPLE_EC_COTTON_800_60 = buf(
     'AAFF200A0060004BE6000100EC004E000001033103310100030506010000000000000004020013006400000400000002022A1E000001000001033103310100030506010000000000000004020013006400000400000002022A1E004001EE61BB',
 )
 
-// Same appliance state twice, the child lock toggled between them: detergent tank at High,
-// softener tank empty, and buf[16] flipping between 0x80 and 0x00.
+// Identical state, child lock toggled: detergent High, softener empty, buf[16] 0x80 vs 0x00.
 const SAMPLE_EC_CHILD_LOCK_ON = buf(
     'AAFF200A0060004D19000100EC004E000001003B003B3A00030A04010000000080010002020013006400000400000003002A1E000401000001003B003B3A00030A04010000000000010002020013006400000400000003002A1E0004014D9BBB',
 )
@@ -42,9 +33,7 @@ const SAMPLE_EC_CHILD_LOCK_OFF = buf(
     'AAFF200A0060004D3D000100EC004E000001003B003B3A00030A04010000000000010002020013006400000400000003002A1E004401000001003B003B3A00030A04010000000000010002020013006400000400000003002A1E0004010824BB',
 )
 
-// One option at a time, each captured while the panel showed only that option enabled. The
-// estimated cycle time corroborates every bit on its own: TurboWash took 28 minutes off,
-// pre-wash added 17, steam added 51.
+// One option at a time, each captured with only that option enabled on the panel.
 const SAMPLE_EC_STEAM = buf(
     'AAFF200A0060004F7A000100EC004E000001013201323A00030A06010000008000010003000013006400000400000003002A1E000001000001013201323A00030A06010000008000010003000013006400000400000003002A1E0040014397BB',
 )
@@ -54,7 +43,7 @@ const SAMPLE_EC_TURBOWASH = buf(
 const SAMPLE_EC_PREWASH = buf(
     'AAFF200A0060004F94000100EC004E000001033B033B0100030704010000004000000003000013006400000500000002022A1E000001000001033B033B0100030704010000004000000003000013006400000500000002022A1E004001DA2CBB',
 )
-// Delay set to 4 hours, no option bits.
+// Delay 4 h, no option bits.
 const SAMPLE_EC_DELAY_4H = buf(
     'AAFF200A0060004FA6000100EC004E000001032A032A0100030704010004000000000003000013006400000400000002022A1E000001000001032A032A0100030704010000000000000003000013006400000400000002022A1E00000175AABB',
 )
@@ -101,7 +90,6 @@ describe(MODEL_ID, () => {
         ]) {
             assert.ok(components[c], `component ${c} present`)
         }
-        // power is a stateless press, not a switch: the appliance gives no timely feedback
         assert.equal(components.power.platform, 'button')
         assert.equal(components.power.state_topic, undefined)
     })
@@ -146,7 +134,6 @@ describe(MODEL_ID, () => {
         const { ha, thinq } = makeDevice()
         thinq.emit('data', SAMPLE_EC_CHILD_LOCK_ON)
         const props = ha.devices[DEVICE_ID].properties
-        // Confirmed on the panel: tank 1 (detergent) at 3/3, tank 2 (softener) empty.
         assert.equal(props.detergent, 'High')
         assert.equal(props.softener, 'Off')
     })
@@ -168,8 +155,7 @@ describe(MODEL_ID, () => {
         assert.equal(ha.devices[DEVICE_ID].properties.course, 'AI Wash')
     })
 
-    // Captured six seconds after switching the panel off: status is back to 1 but course, spin
-    // and temperature are all zero. Reported as ON, this made the HA switch bounce back.
+    // Six seconds after switching the panel off: status back to 1, selection zeroed.
     const SAMPLE_EC_STANDBY = buf(
         'AAFF200A0060004E65000100EC004E000001033803380000000000000000000000000004000013006400000000000002022A1E004001000001033803380000000000000000000000000004000013006400000000000002022A1E000001100EBB',
     )
@@ -232,8 +218,6 @@ describe(MODEL_ID, () => {
         assert.equal(ha.devices[DEVICE_ID].properties.spin, 800)
         assert.equal(ha.devices[DEVICE_ID].properties.temp, 60)
 
-        // Rinsing zeroes the temperature byte and End zeroes the spin byte; neither should
-        // blank the sensor while the machine is still running.
         const rinsing = Buffer.from(SAMPLE_EC_COTTON_800_60)
         const block = 2 + 14
         rinsing[block + 1] = 7 // Rinsing

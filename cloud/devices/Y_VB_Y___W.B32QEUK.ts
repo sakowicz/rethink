@@ -6,9 +6,7 @@ import { allowExtendedType } from '@/util/casting'
 import AABBDevice from './aabb_device'
 import { ERRORS, STATES, COURSES, TEMPERATURES, SPINS, DOSES } from './washer_common'
 
-// Course codes are model-specific. This appliance's panel calls 0x3a "AI Wash", while the
-// shared table maps it to "Bedding" for whichever model that was captured from, so override
-// just that entry instead of editing the shared list.
+// This panel calls 0x3a "AI Wash"; the shared table has "Bedding" for some other model.
 const COURSES_VB: Record<number, string> = { ...COURSES, 0x3a: 'AI Wash' }
 
 const HEADER_LENGTH = 14
@@ -21,13 +19,8 @@ export default class Device extends AABBDevice {
             allowExtendedType({
                 ...HADevice.config(meta, { name: 'LG Washer' }),
                 components: {
-                    // F02A0100 is a power-button press, not "set to on": sending it twice turns
-                    // the appliance on and then off again. There is also no usable feedback -
-                    // after a power change the appliance goes quiet for up to 40 seconds and
-                    // ignores F0ED status requests in the meantime, so a switch spent most of
-                    // its time showing the previous state. A button matches both the command and
-                    // what can actually be observed; `status` carries the real state once it
-                    // arrives.
+                    // A button, not a switch: F02A0100 toggles, and after a power change the
+                    // appliance reports nothing for up to 40s, so a switch showed a stale state.
                     power: {
                         platform: 'button',
                         unique_id: '$deviceid-power',
@@ -220,10 +213,8 @@ export default class Device extends AABBDevice {
     processAABB(buf: Buffer) {
         if (buf[0] !== 0x20) return
 
-        // A 14-byte header precedes the status block(s): buf[2..3] is the total frame length,
-        // buf[10] the record kind and buf[11..12] the payload length. This appliance answers
-        // the F0ED status request with a single 0xEB block and then pushes 0xEC frames, which
-        // append the previous block as well. The first block is the current state either way.
+        // 14-byte header: buf[2..3] frame length, buf[10] record kind, buf[11..12] payload
+        // length. 0xEB carries one status block, 0xEC appends the previous one; take the first.
         if (buf[10] === 0xeb && buf.length === HEADER_LENGTH + STATUS_LENGTH) {
             this.processStatus(buf.subarray(HEADER_LENGTH))
         } else if (buf[10] === 0xec && buf.length === HEADER_LENGTH + STATUS_LENGTH * 2) {
@@ -237,41 +228,26 @@ export default class Device extends AABBDevice {
         const time_initial = buf[4] * 60 + buf[5]
         const course = buf[6]
         const error = buf[7]
-        // Spin sits one byte lower than on the V8 sibling, and temperature follows it.
-        // Verified against the panel: Cotton at 800 rpm / 60 C gives buf[9]=5, buf[10]=6, and
-        // the six spin positions this machine offers (0/400/800/1000/1200/1400) come out of
-        // the shared SPINS table without touching any of its "assumed" entries. buf[11], which
-        // the V8 handler reads as temperature, never changes on this firmware.
+        // One byte lower than the V8 sibling reads them; its buf[11] never changes here.
         const spin = buf[9]
         const temp = buf[10]
         const lock_status = buf[16]
         const cycles = buf[22]
         const energy = buf[33] * 256 + buf[34]
-        // ezDispense tank levels, same offsets the F_VB_F___W.B_2QEUK handler uses once its
-        // absolute indices are rebased onto the status block.
         const detergent = buf[31]
         const softener = buf[32]
-        // Option bits, same positions the F_VB_F___W.B_2QEUK handler uses. Each one was
-        // confirmed on its own by the effect it has on the estimated cycle time: 0x01
-        // TurboWash shortened it by 28 min, 0x40 pre-wash added 17, 0x80 steam added 51.
-        // F_VB_F's 0x08 (eco hybrid) never appears here - that is a dryer option.
         const options = buf[15]
-        // Delay is a plain hour count, not a bit. Stepping the panel gave 3 then 4.
         const delay_end = buf[13]
 
-        // The Wi-Fi module stays awake after the panel is switched off and keeps reporting
-        // status=1 ("Ready") with the whole selection zeroed. There is no separate power bit:
-        // standby is exactly "status 1 with nothing selected".
+        // No power bit: switched off, the module stays awake and reports status=1 with the
+        // selection zeroed.
         const powered = status > 0 && !(course === 0 && spin === 0 && temp === 0)
 
         this.publishProperty('error_message', ERRORS[error] ?? 'unknown') // publish message before set error state
         this.publishProperty('error', error ? 'ON' : 'OFF')
         this.publishProperty('status', powered ? (STATES[status] ?? 'unknown') : 'Off')
         this.publishProperty('course', COURSES_VB[course] ?? 'unknown')
-        // Spin and temperature are selections, not live readings, and the appliance stops
-        // reporting them part-way through: temperature drops to 0 when Rinsing starts and spin
-        // drops to 0 at End. Holding the last reported value keeps the sensors showing what was
-        // actually selected instead of blanking out mid-cycle; a powered-off machine clears them.
+        // temp stops being reported at Rinsing and spin at End; hold the selected value.
         if (!powered) {
             this.publishProperty('spin', 'unknown')
             this.publishProperty('temp', 'unknown')
@@ -295,9 +271,7 @@ export default class Device extends AABBDevice {
     }
 
     setProperty(prop: string, mqttValue: string) {
-        // toggles the appliance, whichever way it currently is
         if (prop === 'power') this.send(Buffer.from('F02A0100', 'hex'))
-
         if (prop === 'pause') this.send(Buffer.from('F024040100', 'hex'))
         if (prop === 'start') this.send(Buffer.from(mqttValue || 'F024050100', 'hex'))
     }
