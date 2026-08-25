@@ -9,6 +9,7 @@ import Dev_2REB1GLVB1__2 from './devices/2REB1GLVB1__2'
 import Dev_2RES1VE600FWC from './devices/2RES1VE600FWC'
 import Dev_STUDIO_HOOD from './devices/STUDIO_HOOD'
 import Y_V8_Y___W_B32QEUK from './devices/Y_V8_Y___W.B32QEUK'
+import Y_VB_Y___W_B32QEUK from './devices/Y_VB_Y___W.B32QEUK'
 import F_V8_Y___W_B_2QEUK from './devices/F_V8_Y___W.B_2QEUK'
 import Y_V8_F___W_B_2QEUK from './devices/Y_V8_F___W.B_2QEUK'
 import F_V__F___W_B_1QEUK from './devices/F_V__F___W.B_1QEUK'
@@ -48,6 +49,10 @@ const t2deviceTypes: Record<string, T2Factory> = {
     ['2RES1VE600FWC']: Dev_2RES1VE600FWC,
     ['STUDIO_HOOD']: Dev_STUDIO_HOOD,
     ['Y_V8_Y___W.B32QEUK']: Y_V8_Y___W_B32QEUK,
+    // LG F4W1175YW (Vivace). Same washer family, but the VB firmware (protocolVer 7,
+    // RTK_RTL8720cm) pushes the doubled 0xEC status frame and carries spin/temperature one
+    // byte lower, so it needs its own handler rather than an alias.
+    ['Y_VB_Y___W.B32QEUK']: Y_VB_Y___W_B32QEUK,
     ['F_V7_Y___W.B_2QEUK']: F_V8_Y___W_B_2QEUK, // NOTE: we reuse F_V8_Y___W_B_2QEUK as the models appear to be compatible
     ['F_V8_Y___W.B_2QEUK']: F_V8_Y___W_B_2QEUK,
     ['Y_V8_F___W.B_2QEUK']: Y_V8_F___W_B_2QEUK,
