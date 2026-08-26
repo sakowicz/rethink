@@ -28,8 +28,9 @@ const STATUS_REQUEST = 'F0ED1121010000001800'
 // F0E5 write on unit 0xff. The header is F0E5 00 02 01 ff <n> then n (field,value) pairs;
 // the 0xE6 reply echoes (field,status) per pair. Fields seen: 0x02 power, 0x03 run-state,
 // 0x0a course, 0x50 end melody.
-// Run/pause is field 0x03 value 0x02 — a TOGGLE (run -> pause, pause -> resume), captured
-// live driving pause and resume with these exact bytes.
+// Field 0x03 value 0x02 pauses a running cycle (captured live). It is NOT a symmetric toggle:
+// from Pause it is rejected (reply status 0x11), so resume goes through the full start sequence
+// below, not this alone.
 const RUN_TOGGLE = 'F0E5000201FF010302'
 // The one-time course-commit that follows the run toggle on a fresh start (retransmitted
 // until acked); absent on pause. The dryer then goes to Drying.
@@ -174,13 +175,14 @@ export default class Device extends AABBDevice {
                         name: 'Start',
                         icon: 'mdi:play-circle-outline',
                     },
-                    // One button for pause and resume: the underlying command is a toggle.
+                    // Pause only: the run-state toggle pauses a running cycle but is rejected
+                    // from Pause (reply status 0x11), so resume goes through the Start button.
                     pause: {
                         platform: 'button',
                         unique_id: '$deviceid-pause',
                         command_topic: '$this/pause/set',
                         payload_press: '',
-                        name: 'Pause/Resume',
+                        name: 'Pause',
                         icon: 'mdi:pause-circle-outline',
                     },
                     status: {
@@ -366,9 +368,9 @@ export default class Device extends AABBDevice {
     }
 
     // Power is a button, not a switch: F02A0100 is a power-button press (confirmed live), so
-    // two presses toggle on then off. Start and pause/resume replay the exact F0E5/F024 bytes
-    // captured from the ThinQ app; start needs Remote Start armed on the panel or the appliance
-    // ignores it, same asymmetry as the washer.
+    // two presses toggle on then off. Start (and resume from Pause) replays the exact F0E5/F024
+    // sequence captured from the ThinQ app; it needs Remote Start armed on the panel or the
+    // appliance ignores it, same asymmetry as the washer. Pause sends the run-state field alone.
     setProperty(prop: string, mqttValue: string) {
         if (prop === 'power_button') this.send(Buffer.from('F02A0100', 'hex'))
         if (prop === 'pause') this.send(Buffer.from(RUN_TOGGLE, 'hex'))
