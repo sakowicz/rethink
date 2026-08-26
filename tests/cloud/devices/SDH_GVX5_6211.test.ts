@@ -68,6 +68,10 @@ const SAMPLE_EC_OFF_AFTER_USE = buf(
 
 const WRITE_INIT = 'AA0EF0ED1121010000001800B5BB'
 const WRITE_POWER_PRESS = 'AA08F02A010098BB'
+const WRITE_RUN_TOGGLE = 'AA0DF0E5000201FF010302C1BB'
+const WRITE_START_COMMIT = 'AA09F024120114BBBB'
+// Course-program step for the Time Dry course (0x15) that SAMPLE_EC_DRYING carries in rec[20].
+const WRITE_COURSE_PROGRAM_TIMEDRY = 'AA0FF0E5000201FF020A150301E0BB'
 
 function makeDevice() {
     const ha = new MockHAConnection()
@@ -85,6 +89,8 @@ describe(MODEL_ID, () => {
         for (const c of [
             'power',
             'power_button',
+            'start',
+            'pause',
             'status',
             'error',
             'error_message',
@@ -221,8 +227,30 @@ describe(MODEL_ID, () => {
         const { thinq, dev } = makeDevice()
         thinq.resetRecorder()
         dev.setProperty('power_button', '')
-        dev.setProperty('start', '')
+        dev.setProperty('nonsense', '')
         assert.deepEqual(thinq.outbox.map(hex), [WRITE_POWER_PRESS])
+    })
+
+    test('pause sends the run-state field', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('pause', '')
+        assert.deepEqual(thinq.outbox.map(hex), [WRITE_RUN_TOGGLE])
+    })
+
+    test('start programs the selected course, then runs, then commits', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.emit('data', SAMPLE_EC_DRYING) // sets lastCourse from rec[20] (Time Dry 0x15)
+        thinq.resetRecorder()
+        dev.setProperty('start', '')
+        assert.deepEqual(thinq.outbox.map(hex), [WRITE_COURSE_PROGRAM_TIMEDRY, WRITE_RUN_TOGGLE, WRITE_START_COMMIT])
+    })
+
+    test('start with no course selected sends nothing (would only beep)', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('start', '')
+        assert.deepEqual(thinq.outbox.map(hex), [])
     })
 
     test('frames that are not 0x30-family are ignored', () => {

@@ -19,6 +19,11 @@ const BLOCK_MARKER = 0x0a
 // Family-wide "report your state" request, same as the EU washers and US dryers.
 const STATUS_REQUEST = 'F0ED1121010000001800'
 
+const RUN_TOGGLE = 'F0E5000201FF010302'
+const START_COMMIT = 'F024120114'
+const COURSE_PROGRAM_PREFIX = Buffer.from('F0E5000201FF020A', 'hex')
+const COURSE_PROGRAM_SUFFIX = Buffer.from('0301', 'hex')
+
 // rec[1]: dry level, 0 on courses without one. 0x02/0x04 never observed (possibly
 // intermediate levels on five-step models).
 const DRY_LEVEL_OFFSET = 1
@@ -130,6 +135,24 @@ export default class Device extends AABBDevice {
                         payload_press: '',
                         name: 'Power',
                         icon: 'mdi:power',
+                    },
+                    // Needs Remote Start armed on the panel first (see the remote_start entity).
+                    start: {
+                        platform: 'button',
+                        unique_id: '$deviceid-start',
+                        command_topic: '$this/start/set',
+                        payload_press: '',
+                        name: 'Start',
+                        icon: 'mdi:play-circle-outline',
+                    },
+                    // Pause only: the run-state field cannot resume (see setProperty), use Start.
+                    pause: {
+                        platform: 'button',
+                        unique_id: '$deviceid-pause',
+                        command_topic: '$this/pause/set',
+                        payload_press: '',
+                        name: 'Pause',
+                        icon: 'mdi:pause-circle-outline',
                     },
                     status: {
                         platform: 'sensor',
@@ -275,9 +298,13 @@ export default class Device extends AABBDevice {
         }
     }
 
+    // Last course id seen, replayed by the start command's course-program step (0 = none).
+    lastCourse = 0
+
     processStatus(rec: Buffer) {
         if (rec[0] !== BLOCK_MARKER) return
 
+        this.lastCourse = rec[COURSE_OFFSET]
         const phase = rec[PHASE_OFFSET]
         const isOff = (rec[POWER_OFFSET] & POWER_BIT) === 0 || phase === PHASE_OFF
         const error = phase === PHASE_ERROR ? rec[ERROR_OFFSET] : 0
@@ -307,9 +334,18 @@ export default class Device extends AABBDevice {
         this.publishProperty('child_lock', (flags2 & FLAG2_CHILD_LOCK) !== 0 ? 'ON' : 'OFF')
     }
 
-    // Only the power press works: F02A0100 confirmed live; the washers' F024 start/pause are
-    // silently ignored by this model. A press toggles, hence a button rather than a switch.
+    // F02A0100 is a power-button press (a press toggles, hence a button not a switch). Start
+    // replays the app's course-program + run + commit sequence and needs Remote Start armed on
+    // the panel; resume from Pause goes through Start too. Pause sends the run-state field alone.
     setProperty(prop: string, mqttValue: string) {
         if (prop === 'power_button') this.send(Buffer.from('F02A0100', 'hex'))
+        if (prop === 'pause') this.send(Buffer.from(RUN_TOGGLE, 'hex'))
+        if (prop === 'start') {
+            // Nothing selected: starting would only make the appliance beep.
+            if (!this.lastCourse) return
+            this.send(Buffer.concat([COURSE_PROGRAM_PREFIX, Buffer.from([this.lastCourse]), COURSE_PROGRAM_SUFFIX]))
+            this.send(Buffer.from(RUN_TOGGLE, 'hex'))
+            this.send(Buffer.from(START_COMMIT, 'hex'))
+        }
     }
 }
