@@ -58,7 +58,7 @@ async function generateSubscription(client: Client): Promise<Subscription> {
     const privateKey = await subprocess('openssl', ['genrsa', '2048'])
     // openssl req can't read the key from node's socket-backed stdin directly; pipe via cat.
     const csr = await subprocess(
-        'bash',
+        'sh',
         ['-c', `cat | openssl req -new -key /dev/stdin -subj '/CN=AWS IoT Certificate/O=Amazon'`],
         privateKey,
     )
