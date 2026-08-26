@@ -25,15 +25,22 @@ const BLOCK_MARKER = 0x0a
 // Family-wide "report your state" request, same as the EU washers and US dryers.
 const STATUS_REQUEST = 'F0ED1121010000001800'
 
-// F0E5 write on unit 0xff, field 0x03 = run-state. Value 0x02 is a run/pause TOGGLE:
-// Ready -> run, run -> pause, pause -> resume. Captured live from the ThinQ app driving both
-// start (as one step of a longer sequence) and pause with the identical bytes.
+// F0E5 write on unit 0xff. The header is F0E5 00 02 01 ff <n> then n (field,value) pairs;
+// the 0xE6 reply echoes (field,status) per pair. Fields seen: 0x02 power, 0x03 run-state,
+// 0x0a course, 0x50 end melody.
+// Run/pause is field 0x03 value 0x02 — a TOGGLE (run -> pause, pause -> resume), captured
+// live driving pause and resume with these exact bytes.
 const RUN_TOGGLE = 'F0E5000201FF010302'
-// The app's start also sends this straight after the toggle (retransmitted until acked), and
-// the appliance goes to Drying. Absent on pause, so it reads as a one-time course-commit
-// needed only to begin a fresh cycle. We do NOT reprogram the course (the app's preceding
-// F0E5 field 0x0a write) so the panel's own course/level/mode selection is respected.
+// The one-time course-commit that follows the run toggle on a fresh start (retransmitted
+// until acked); absent on pause. The dryer then goes to Drying.
 const START_COMMIT = 'F024120114'
+// F0E5 field 0x0a = the selected course id, written together with run-state 0x03 = 0x01 in a
+// single two-pair packet: F0E5 00 02 01 ff 02 0a <course> 03 01. The ThinQ app always sends
+// this before the run toggle — starting without it is rejected (field-03 reply status 0x0a,
+// the appliance just beeps). The course byte is taken from the live status block (rec[20]) so
+// the panel's own selection is used rather than a hard-coded course.
+const COURSE_PROGRAM_PREFIX = Buffer.from('F0E5000201FF020A', 'hex')
+const COURSE_PROGRAM_SUFFIX = Buffer.from('0301', 'hex')
 
 // rec[1]: dry level. Confirmed by stepping the panel's poziom suszenia on Cotton — the cycle
 // estimate moved 150 -> 180 -> 110 min in lockstep. 0 on courses without a dry level.
@@ -321,9 +328,14 @@ export default class Device extends AABBDevice {
         }
     }
 
+    // Last course id seen in a status block, replayed by the start command's course-program
+    // step. 0 = no course selected.
+    lastCourse = 0
+
     processStatus(rec: Buffer) {
         if (rec[0] !== BLOCK_MARKER) return
 
+        this.lastCourse = rec[COURSE_OFFSET]
         const phase = rec[PHASE_OFFSET]
         const isOff = (rec[POWER_OFFSET] & POWER_BIT) === 0 || phase === PHASE_OFF
         const error = phase === PHASE_ERROR ? rec[ERROR_OFFSET] : 0
@@ -361,6 +373,9 @@ export default class Device extends AABBDevice {
         if (prop === 'power_button') this.send(Buffer.from('F02A0100', 'hex'))
         if (prop === 'pause') this.send(Buffer.from(RUN_TOGGLE, 'hex'))
         if (prop === 'start') {
+            // Nothing selected: starting would only make the appliance beep.
+            if (!this.lastCourse) return
+            this.send(Buffer.concat([COURSE_PROGRAM_PREFIX, Buffer.from([this.lastCourse]), COURSE_PROGRAM_SUFFIX]))
             this.send(Buffer.from(RUN_TOGGLE, 'hex'))
             this.send(Buffer.from(START_COMMIT, 'hex'))
         }
