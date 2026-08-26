@@ -193,6 +193,22 @@ export default class Device extends AABBDevice {
                         device_class: 'enum',
                         options: DOSES,
                     },
+                    softener_low: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-softener_low',
+                        state_topic: '$this/softener_low',
+                        name: 'Softener low',
+                        icon: 'mdi:cup-off-outline',
+                        device_class: 'problem',
+                    },
+                    dispenser_drawer: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-dispenser_drawer',
+                        state_topic: '$this/dispenser_drawer',
+                        name: 'Dispenser drawer',
+                        icon: 'mdi:archive-arrow-up-outline',
+                        device_class: 'opening',
+                    },
                     remaining_time: {
                         platform: 'sensor',
                         unique_id: '$deviceid-remaining_time',
@@ -268,6 +284,10 @@ export default class Device extends AABBDevice {
         this.publishProperty('prewash', options & 0x40 ? 'ON' : 'OFF')
         this.publishProperty('steam', options & 0x80 ? 'ON' : 'OFF')
         this.publishProperty('delay_end', delay_end)
+        // buf[36]: bit1 = latched softener-low warning (cleared when the drawer is cycled),
+        // bit2 = ezDispense drawer open, bit6 = ~2 s blink phase (ignored).
+        this.publishProperty('softener_low', buf[36] & 0x02 ? 'ON' : 'OFF')
+        this.publishProperty('dispenser_drawer', buf[36] & 0x04 ? 'ON' : 'OFF')
     }
 
     setProperty(prop: string, mqttValue: string) {

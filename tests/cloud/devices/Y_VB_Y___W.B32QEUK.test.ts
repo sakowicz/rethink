@@ -48,6 +48,25 @@ const SAMPLE_EC_DELAY_4H = buf(
     'AAFF200A0060004FA6000100EC004E000001032A032A0100030704010004000000000003000013006400000400000002022A1E000001000001032A032A0100030704010000000000000003000013006400000400000002022A1E00000175AABB',
 )
 
+// buf[36] states captured live while cycling the ezDispense drawer with the softener
+// warning latched: low+closed, low+open, cleared+open, cleared+closed.
+const SAMPLE_EC_SOFTENER_LOW = buf(
+    'AAFF200A0060001C9D000100EC004E000001000000000000000000000000000000000000000015006400000000000002022A1E004201000001000000000000000000000000000000000000000015006400000000000002022A1E000201AD01BB',
+)
+const SAMPLE_EC_SOFTENER_LOW_DRAWER_OPEN = buf(
+    'AAFF200A0060001CC8000100EC004E000001000000000000000000000000000000000000000015006400000000000002022A1E004601000001000000000000000000000000000000000000000015006400000000000002022A1E0006013867BB',
+)
+const SAMPLE_EC_DRAWER_OPEN = buf(
+    'AAFF200A0060001CD6000100EC004E000001000000000000000000000000000000000000000015006400000000000002022A1E000401000001000000000000000000000000000000000000000015006400000000000002022A1E004401592EBB',
+)
+const SAMPLE_EC_DISPENSER_CLEAR = buf(
+    'AAFF200A0060001CD1000100EC004E000001000000000000000000000000000000000000000015006400000000000002022A1E000001000001000000000000000000000000000000000000000015006400000000000002022A1E0040017505BB',
+)
+// Same cleared state captured in the opposite blink phase: buf[36] = 0x40.
+const SAMPLE_EC_DISPENSER_CLEAR_BLINK = buf(
+    'AAFF200A0060001C9A000100EC004E00000100000000000000000000000000000000000000001500640000000001AE02022A1E004001000001000000000000000000000000000000000000000015006400000000000002022A1E00020144CCBB',
+)
+
 const WRITE_INIT = 'AA0EF0ED1121010000001800B5BB'
 const WRITE_POWER_PRESS = 'AA08F02A010098BB'
 
@@ -87,6 +106,8 @@ describe(MODEL_ID, () => {
             'energy',
             'initial_time',
             'remaining_time',
+            'softener_low',
+            'dispenser_drawer',
         ]) {
             assert.ok(components[c], `component ${c} present`)
         }
@@ -136,6 +157,31 @@ describe(MODEL_ID, () => {
         const props = ha.devices[DEVICE_ID].properties
         assert.equal(props.detergent, 'High')
         assert.equal(props.softener, 'Off')
+    })
+
+    test('softener-low warning and drawer state track bits 1 and 2 of buf[36]', () => {
+        const { ha, thinq } = makeDevice()
+        const props = ha.devices[DEVICE_ID].properties
+        thinq.emit('data', SAMPLE_EC_SOFTENER_LOW)
+        assert.equal(props.softener_low, 'ON')
+        assert.equal(props.dispenser_drawer, 'OFF')
+        thinq.emit('data', SAMPLE_EC_SOFTENER_LOW_DRAWER_OPEN)
+        assert.equal(props.softener_low, 'ON')
+        assert.equal(props.dispenser_drawer, 'ON')
+        thinq.emit('data', SAMPLE_EC_DRAWER_OPEN)
+        assert.equal(props.softener_low, 'OFF')
+        assert.equal(props.dispenser_drawer, 'ON')
+        thinq.emit('data', SAMPLE_EC_DISPENSER_CLEAR)
+        assert.equal(props.softener_low, 'OFF')
+        assert.equal(props.dispenser_drawer, 'OFF')
+    })
+
+    test('the blink-phase bit 0x40 of buf[36] does not leak into the dispenser sensors', () => {
+        const { ha, thinq } = makeDevice()
+        const props = ha.devices[DEVICE_ID].properties
+        thinq.emit('data', SAMPLE_EC_DISPENSER_CLEAR_BLINK)
+        assert.equal(props.softener_low, 'OFF')
+        assert.equal(props.dispenser_drawer, 'OFF')
     })
 
     test('child lock tracks bit 0x80 of the lock byte', () => {
