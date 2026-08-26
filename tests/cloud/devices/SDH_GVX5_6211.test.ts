@@ -68,6 +68,8 @@ const SAMPLE_EC_OFF_AFTER_USE = buf(
 
 const WRITE_INIT = 'AA0EF0ED1121010000001800B5BB'
 const WRITE_POWER_PRESS = 'AA08F02A010098BB'
+const WRITE_RUN_TOGGLE = 'AA0DF0E5000201FF010302C1BB'
+const WRITE_START_COMMIT = 'AA09F024120114BBBB'
 
 function makeDevice() {
     const ha = new MockHAConnection()
@@ -217,12 +219,30 @@ describe(MODEL_ID, () => {
         assert.equal(props.remaining_time, 17)
     })
 
+    test('config exposes the start and pause buttons', () => {
+        const { ha } = makeDevice()
+        const components = ha.devices[DEVICE_ID].config!.components as Record<string, Record<string, unknown>>
+        assert.equal(components.start.platform, 'button')
+        assert.equal(components.pause.platform, 'button')
+    })
+
     test('the power button sends the F02A press and unknown props send nothing', () => {
         const { thinq, dev } = makeDevice()
         thinq.resetRecorder()
         dev.setProperty('power_button', '')
-        dev.setProperty('start', '')
+        dev.setProperty('nonsense', '')
         assert.deepEqual(thinq.outbox.map(hex), [WRITE_POWER_PRESS])
+    })
+
+    test('pause sends the run/pause toggle, start sends the toggle then the commit', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('pause', '')
+        assert.deepEqual(thinq.outbox.map(hex), [WRITE_RUN_TOGGLE])
+
+        thinq.resetRecorder()
+        dev.setProperty('start', '')
+        assert.deepEqual(thinq.outbox.map(hex), [WRITE_RUN_TOGGLE, WRITE_START_COMMIT])
     })
 
     test('frames that are not 0x30-family are ignored', () => {

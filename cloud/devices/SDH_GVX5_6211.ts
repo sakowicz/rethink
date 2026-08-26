@@ -25,6 +25,16 @@ const BLOCK_MARKER = 0x0a
 // Family-wide "report your state" request, same as the EU washers and US dryers.
 const STATUS_REQUEST = 'F0ED1121010000001800'
 
+// F0E5 write on unit 0xff, field 0x03 = run-state. Value 0x02 is a run/pause TOGGLE:
+// Ready -> run, run -> pause, pause -> resume. Captured live from the ThinQ app driving both
+// start (as one step of a longer sequence) and pause with the identical bytes.
+const RUN_TOGGLE = 'F0E5000201FF010302'
+// The app's start also sends this straight after the toggle (retransmitted until acked), and
+// the appliance goes to Drying. Absent on pause, so it reads as a one-time course-commit
+// needed only to begin a fresh cycle. We do NOT reprogram the course (the app's preceding
+// F0E5 field 0x0a write) so the panel's own course/level/mode selection is respected.
+const START_COMMIT = 'F024120114'
+
 // rec[1]: dry level. Confirmed by stepping the panel's poziom suszenia on Cotton — the cycle
 // estimate moved 150 -> 180 -> 110 min in lockstep. 0 on courses without a dry level.
 const DRY_LEVEL_OFFSET = 1
@@ -146,6 +156,25 @@ export default class Device extends AABBDevice {
                         payload_press: '',
                         name: 'Power',
                         icon: 'mdi:power',
+                    },
+                    // Start needs Remote Start armed on the panel first (see the remote_start
+                    // entity), same as the EU washer.
+                    start: {
+                        platform: 'button',
+                        unique_id: '$deviceid-start',
+                        command_topic: '$this/start/set',
+                        payload_press: '',
+                        name: 'Start',
+                        icon: 'mdi:play-circle-outline',
+                    },
+                    // One button for pause and resume: the underlying command is a toggle.
+                    pause: {
+                        platform: 'button',
+                        unique_id: '$deviceid-pause',
+                        command_topic: '$this/pause/set',
+                        payload_press: '',
+                        name: 'Pause/Resume',
+                        icon: 'mdi:pause-circle-outline',
                     },
                     status: {
                         platform: 'sensor',
@@ -324,12 +353,16 @@ export default class Device extends AABBDevice {
         this.publishProperty('child_lock', (flags2 & FLAG2_CHILD_LOCK) !== 0 ? 'ON' : 'OFF')
     }
 
-    // Only the power press is wired up. F02A0100 was confirmed live (it switched the appliance
-    // off); the washer's F024 start/pause commands are silently ignored by this model, and the
-    // F0E5 write channel (F0E5 00 02 01 30 01 <field> <value>, field 0x02 = power on/off) has no
-    // known start field yet — a wrong value beeps and returns status 0x0c. Power is a button,
-    // not a switch: F02A0100 is a power-button press, so two presses toggle on then off.
+    // Power is a button, not a switch: F02A0100 is a power-button press (confirmed live), so
+    // two presses toggle on then off. Start and pause/resume replay the exact F0E5/F024 bytes
+    // captured from the ThinQ app; start needs Remote Start armed on the panel or the appliance
+    // ignores it, same asymmetry as the washer.
     setProperty(prop: string, mqttValue: string) {
         if (prop === 'power_button') this.send(Buffer.from('F02A0100', 'hex'))
+        if (prop === 'pause') this.send(Buffer.from(RUN_TOGGLE, 'hex'))
+        if (prop === 'start') {
+            this.send(Buffer.from(RUN_TOGGLE, 'hex'))
+            this.send(Buffer.from(START_COMMIT, 'hex'))
+        }
     }
 }
