@@ -233,7 +233,7 @@ export default class Device extends AABBDevice {
         const temp = buf[10]
         const lock_status = buf[16]
         const cycles = buf[22]
-        const energy = buf[33] * 256 + buf[34]
+        const energy = buf[29] * 256 + buf[30]
         const detergent = buf[31]
         const softener = buf[32]
         const options = buf[15]

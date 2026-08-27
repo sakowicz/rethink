@@ -48,6 +48,11 @@ const SAMPLE_EC_DELAY_4H = buf(
     'AAFF200A0060004FA6000100EC004E000001032A032A0100030704010004000000000003000013006400000400000002022A1E000001000001032A032A0100030704010000000000000003000013006400000400000002022A1E00000175AABB',
 )
 
+// End of a real 40 C wash; buf[29..30] = 0x01AE = 430 Wh, the exact ThinQ app figure.
+const SAMPLE_EC_WASH_END_430WH = buf(
+    'AAFF200A00600019F2000100EC004E00000A00000129050000000000000000004000000108001400640000030001AE02022A1E0002010000000000012905000000000000000000000000020A001400640000030001AE02022A1E0002016153BB',
+)
+
 const WRITE_INIT = 'AA0EF0ED1121010000001800B5BB'
 const WRITE_POWER_PRESS = 'AA08F02A010098BB'
 
@@ -104,7 +109,7 @@ describe(MODEL_ID, () => {
         assert.equal(props.remaining_time, 0)
         assert.equal(props.initial_time, 0)
         assert.equal(props.cycles, 19)
-        assert.equal(props.energy, 10782)
+        assert.equal(props.energy, 0)
         assert.equal(props.remote_start, 'OFF')
         assert.equal(props.door_lock, 'ON') // unlocked, the inverted convention
     })
@@ -117,7 +122,7 @@ describe(MODEL_ID, () => {
         assert.equal(props.remaining_time, 45)
         assert.equal(props.initial_time, 45)
         assert.equal(props.cycles, 19)
-        assert.equal(props.energy, 10782)
+        assert.equal(props.energy, 0)
     })
 
     test('spin and temperature match the panel', () => {
@@ -136,6 +141,12 @@ describe(MODEL_ID, () => {
         const props = ha.devices[DEVICE_ID].properties
         assert.equal(props.detergent, 'High')
         assert.equal(props.softener, 'Off')
+    })
+
+    test('energy is the per-cycle Wh counter at buf[29..30]', () => {
+        const { ha, thinq } = makeDevice()
+        thinq.emit('data', SAMPLE_EC_WASH_END_430WH)
+        assert.equal(ha.devices[DEVICE_ID].properties.energy, 430)
     })
 
     test('child lock tracks bit 0x80 of the lock byte', () => {
