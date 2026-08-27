@@ -69,6 +69,14 @@ const SAMPLE_EC_OFF_AFTER_USE = buf(
 const WRITE_INIT = 'AA0EF0ED1121010000001800B5BB'
 const WRITE_POWER_PRESS = 'AA08F02A010098BB'
 const WRITE_RUN_TOGGLE = 'AA0DF0E5000201FF010302C1BB'
+// Cycle-end frames from two real runs; rec[17..18] matched the ThinQ app exactly.
+const SAMPLE_EC_END_284WH = buf(
+    'AAFF300A007600065C000100EC00640A00030002150000000001001E08110005011B041500008F00004080050000000600000000000000000000000000000000000A00030002150000000001001E04080007011C041500008F2000008005000000060000000000000000000000000000000000B4F2BB',
+)
+const SAMPLE_EC_END_144WH = buf(
+    'AAFF300A007600071D000100EC00640A00030000150000000001001411070005008E041500008F00006080050000000600000000000000000000000000000000000A000300001500000000010014081100050090041500008F000040800500000006000000000000000000000000000000000023DFBB',
+)
+
 const WRITE_START_COMMIT = 'AA09F024120114BBBB'
 // Course-program step for the Time Dry course (0x15) that SAMPLE_EC_DRYING carries in rec[20].
 const WRITE_COURSE_PROGRAM_TIMEDRY = 'AA0FF0E5000201FF020A150301E0BB'
@@ -97,6 +105,7 @@ describe(MODEL_ID, () => {
             'dry_mode',
             'remaining_time',
             'initial_time',
+            'energy',
             'delay',
             'anti_crease',
             'moisture_alert',
@@ -219,6 +228,15 @@ describe(MODEL_ID, () => {
         const props = ha.devices[DEVICE_ID].properties
         assert.equal(props.status, 'Pause')
         assert.equal(props.remaining_time, 17)
+    })
+
+    test('energy is the per-cycle Wh counter at rec[17..18]', () => {
+        const a = makeDevice()
+        a.thinq.emit('data', SAMPLE_EC_END_284WH)
+        assert.equal(a.ha.devices[DEVICE_ID].properties.energy, 284)
+        const b = makeDevice()
+        b.thinq.emit('data', SAMPLE_EC_END_144WH)
+        assert.equal(b.ha.devices[DEVICE_ID].properties.energy, 144)
     })
 
     test('config exposes the start and pause buttons', () => {

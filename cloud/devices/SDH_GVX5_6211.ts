@@ -142,6 +142,10 @@ const FLAG2_ACTIVE = 0x40
 const POWER_OFFSET = 27
 const POWER_BIT = 0x80
 
+// rec[17..18] BE: current-cycle energy in Wh, growing live and reset when a new cycle starts.
+// Matched the ThinQ app's per-cycle figures exactly (284 Wh and 144 Wh on two live runs).
+const ENERGY_OFFSET = 17
+
 export default class Device extends AABBDevice {
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, thinq)
@@ -239,6 +243,16 @@ export default class Device extends AABBDevice {
                         icon: 'mdi:timer-outline',
                         device_class: 'duration',
                         unit_of_measurement: 'min',
+                    },
+                    energy: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-energy',
+                        state_topic: '$this/energy',
+                        name: 'Energy',
+                        icon: 'mdi:lightning-bolt',
+                        device_class: 'energy',
+                        state_class: 'total_increasing',
+                        unit_of_measurement: 'Wh',
                     },
                     initial_time: {
                         platform: 'sensor',
@@ -351,6 +365,7 @@ export default class Device extends AABBDevice {
         this.publishProperty('dry_mode', DRY_MODES[rec[DRY_MODE_OFFSET]] ?? 'unknown')
         this.publishProperty('remaining_time', isOff ? 0 : rec.readUInt16BE(REMAIN_TIME_OFFSET))
         this.publishProperty('initial_time', isOff ? 0 : rec.readUInt16BE(INITIAL_TIME_OFFSET))
+        this.publishProperty('energy', rec.readUInt16BE(ENERGY_OFFSET))
 
         const flags2 = rec[FLAGS2_OFFSET]
         this.publishProperty('delay', (flags2 & FLAG2_DELAY) !== 0 ? rec.readUInt16BE(DELAY_OFFSET) : 0)

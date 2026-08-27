@@ -249,7 +249,10 @@ export default class Device extends AABBDevice {
         const temp = buf[10]
         const lock_status = buf[16]
         const cycles = buf[22]
-        const energy = buf[33] * 256 + buf[34]
+        // buf[29..30] BE: current-cycle energy in Wh, grows live and resets when a new cycle
+        // starts; matched the ThinQ app's per-cycle figure exactly (430 Wh). buf[33..34] holds
+        // the static ezDispense dose amounts (ml), not energy.
+        const energy = buf[29] * 256 + buf[30]
         const detergent = buf[31]
         const softener = buf[32]
         const options = buf[15]
